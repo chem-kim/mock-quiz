@@ -5,6 +5,9 @@
  *   state   { qid, label, kind:'ox'|'mc', labels:[...], open, seq }   ← 교사만 씀
  *   players { [pid]: { online } }                                     ← 학생
  *   answers { [qid]: { [pid]: { a:'OXO' | '3', t } } }               ← 학생
+ * 결과 보관함: mock-quiz/results/{YYYYMMDD-코드}  (방이 지워져도 남는다, 익명)
+ *   meta { title, date, createdAt }
+ *   q    { [qid]: { a:'OOX,OXX,…', n, unit, t } }
  * qid는 '3-04', '10-25'처럼 ASCII로 쓴다.
  * 주소에 ?net=local 이 있으면 Firebase 없이 같은 브라우저 탭끼리 통신한다(테스트용).
  */
@@ -20,6 +23,7 @@
     appId: '1:620561307547:web:0e04b6fbbf92e1cdd1f33e',
   };
   const ROOT = 'mock-quiz/rooms';
+  const RES = 'mock-quiz/results';
   const SDK = ['https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js',
                'https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js'];
   const isLocal = () => new URLSearchParams(location.search).get('net') === 'local';
@@ -38,6 +42,10 @@
       this.db.ref('.info/serverTimeOffset').on('value', s => { this.off = s.val() || 0; }); }
     now() { return Date.now() + this.off; }
     room(code) { return new FBRoom(this, code); }
+    saveResult(rid, meta, qid, list, unit) {
+      return this.db.ref(`${RES}/${rid}`).update({ meta, [`q/${qid}`]: { a: list.join(','), n: list.length, unit, t: this.now() } });
+    }
+    async loadResults() { return (await this.db.ref(RES).get()).val() || {}; }
     async cleanup() {
       const old = await this.db.ref(ROOT).orderByChild('meta/createdAt').endAt(this.now() - 12 * 3600e3).get();
       const u = {}; old.forEach(s => { u[s.key] = null; }); if (Object.keys(u).length) await this.db.ref(ROOT).update(u);
@@ -65,6 +73,8 @@
     now() { return Date.now(); }
     room(code) { return new LRoom(this, code); }
     cleanup() { return Promise.resolve(); }
+    async saveResult(rid, meta, qid, list, unit) { this.set(`${RES}/${rid}/meta`, meta); this.set(`${RES}/${rid}/q/${qid}`, { a: list.join(','), n: list.length, unit, t: Date.now() }); }
+    async loadResults() { return this.tree(RES + '/'); }
     get(p) { const v = localStorage.getItem('mqdb:' + p); return v == null ? null : JSON.parse(v); }
     set(p, v) { if (v == null) localStorage.removeItem('mqdb:' + p); else localStorage.setItem('mqdb:' + p, JSON.stringify(v)); this.emit(p); }
     keys(pre) { const o = []; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.startsWith('mqdb:' + pre)) o.push(k.slice(5)); } return o; }
