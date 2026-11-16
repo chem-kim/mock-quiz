@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>모의고사 답 보내기</title>
+<style>
+:root{--bg:#f4f6fa;--ink:#1c2333;--muted:#5b6578;--line:#dde2ea;--acc:#5a46d1;--acc-soft:#eeebfd;--ok:#2a9459;--ok-soft:#e5f5ec;--hot:#e0582b;--hot-soft:#fdebe3}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Pretendard","Malgun Gothic","Apple SD Gothic Neo",sans-serif;font-size:18px;line-height:1.5;-webkit-tap-highlight-color:transparent}
+header{background:#fff;border-bottom:1px solid var(--line);padding:.7rem 1rem;display:flex;justify-content:space-between;align-items:center}
+header b{font-size:1.05rem} header span{color:var(--muted);font-size:.9rem}
+main{max-width:30rem;margin:0 auto;padding:1rem}
+.card{background:#fff;border:1px solid var(--line);border-radius:1rem;padding:1.1rem 1.1rem;margin-bottom:1rem}
+h1{font-size:1.6rem;margin:.2rem 0 .8rem}
+.muted{color:var(--muted)}
+button{font:inherit;cursor:pointer;color:inherit;border:2px solid var(--line);background:#fff;border-radius:.8rem;padding:.6rem 1rem;font-weight:800}
+button.primary{background:var(--acc);border-color:var(--acc);color:#fff;width:100%;font-size:1.15rem;padding:.8rem}
+button:disabled{opacity:.4}
+input{font:inherit;font-size:2rem;letter-spacing:.3em;text-align:center;width:100%;border:2px solid var(--line);border-radius:.8rem;padding:.5rem;margin:.5rem 0 1rem}
+.ox{display:grid;grid-template-columns:3rem 1fr 1fr;gap:.6rem;align-items:center;margin:.7rem 0}
+.ox .k{font-size:1.6rem;font-weight:900;text-align:center}
+.ox button{font-size:1.7rem;padding:.55rem 0}
+.ox button.sel[data-v=O]{border-color:var(--ok);background:var(--ok-soft);color:var(--ok)}
+.ox button.sel[data-v=X]{border-color:var(--hot);background:var(--hot-soft);color:var(--hot)}
+.mc{display:grid;grid-template-columns:repeat(5,1fr);gap:.5rem;margin:.7rem 0 1rem}
+.mc button{font-size:1.8rem;padding:.5rem 0}
+.mc button.sel{border-color:var(--acc);background:var(--acc-soft);color:var(--acc)}
+.done{background:var(--ok-soft);color:var(--ok);border-radius:.8rem;padding:.6rem .8rem;font-weight:800;text-align:center;margin-top:.8rem}
+.big{font-size:3rem;text-align:center;margin:.5rem 0}
+.err{color:var(--hot);font-weight:700;min-height:1.3em}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<header><b>📱 모의고사 답 보내기</b><span id="roomTag"></span></header>
+<main>
+  <section id="join" class="card">
+    <h1>방 코드</h1>
+    <div class="muted">칠판에 보이는 4자리 숫자를 넣어요.</div>
+    <input id="code" inputmode="numeric" maxlength="4" autocomplete="off">
+    <button class="primary" id="joinBtn">들어가기</button>
+    <p class="err" id="err"></p>
+  </section>
+
+  <section id="wait" class="card" hidden>
+    <div class="big">⏳</div>
+    <h1 style="text-align:center">잠시 기다려요</h1>
+    <p class="muted" style="text-align:center" id="waitMsg">선생님이 문제를 열면 여기에 나와요.</p>
+  </section>
+
+  <section id="ask" class="card" hidden>
+    <h1 id="qTitle"></h1>
+    <div class="muted" id="qHint"></div>
+    <div id="qBox"></div>
+    <button class="primary" id="sendBtn" disabled>보내기</button>
+    <div class="done" id="sent" hidden></div>
+  </section>
+</main>
+<script src="qnet.js"></script>
+<script>
+'use strict';
+const $=s=>document.querySelector(s);
+const LOCAL=QNet.isLocal();
+const store=LOCAL?sessionStorage:localStorage;
+let pid=store.getItem('mq-pid');
+if(!pid){pid=Math.random().toString(36).slice(2,10);store.setItem('mq-pid',pid);}
+let room=null, st=null, pick=[];
+const show=id=>['join','wait','ask'].forEach(x=>$('#'+x).hidden=x!==id);
+
+const pre=new URLSearchParams(location.search).get('room');
+if(pre)$('#code').value=pre;
+$('#joinBtn').onclick=join;
+$('#code').addEventListener('keydown',e=>{if(e.key==='Enter')join();});
+
+async function join(){
+  const code=$('#code').value.trim();
+  if(!/^\d{4}$/.test(code)){$('#err').textContent='4자리 숫자를 넣어 주세요.';return;}
+  $('#joinBtn').disabled=true;$('#err').textContent='연결하는 중…';
+  try{
+    const be=await QNet.connect();
+    const r=be.room(code);
+    if(!(await r.exists())){$('#err').textContent='그 번호의 방이 없어요. 다시 확인해 주세요.';$('#joinBtn').disabled=false;return;}
+    room=r;await room.join(pid);
+    $('#roomTag').textContent='방 '+code;$('#err').textContent='';
+    show('wait');
+    room.onState(onState);
+  }catch(e){$('#err').textContent='인터넷 연결을 확인해 주세요.';$('#joinBtn').disabled=false;}
+}
+
+function onState(s){
+  const prev=st;st=s;
+  if(!s||!s.qid){show('wait');$('#waitMsg').textContent='선생님이 문제를 열면 여기에 나와요.';return;}
+  if(!s.open){show('wait');$('#waitMsg').textContent=`${s.label} 응답이 마감되었어요. 칠판을 봐 주세요.`;return;}
+  show('ask');
+  if(prev&&prev.qid===s.qid&&prev.open)return;   // 같은 문항이면 고른 것 유지
+  const saved=store.getItem('mq-a-'+s.qid);
+  $('#qTitle').textContent=s.label;
+  if(s.kind==='ox'){
+    pick=saved?saved.split(''):s.labels.map(()=>null);
+    $('#qHint').textContent=s.labels[0]==='A'?'학생마다 옳으면 O, 틀리면 X':'보기마다 옳으면 O, 틀리면 X';
+    $('#qBox').innerHTML=s.labels.map((l,i)=>`<div class="ox"><span class="k">${l}</span><button data-i="${i}" data-v="O">O</button><button data-i="${i}" data-v="X">X</button></div>`).join('');
+  }else{
+    pick=[saved||null];
+    $('#qHint').textContent='답 번호를 하나 골라요';
+    $('#qBox').innerHTML=`<div class="mc">${[1,2,3,4,5].map(i=>`<button data-v="${i}">${'①②③④⑤'[i-1]}</button>`).join('')}</div>`;
+  }
+  $('#sent').hidden=!saved;$('#sent').textContent='보냈어요! 바꾸려면 다시 고르고 보내기';
+  paint();
+}
+function paint(){
+  if(st.kind==='ox')document.querySelectorAll('.ox button').forEach(b=>b.classList.toggle('sel',pick[+b.dataset.i]===b.dataset.v));
+  else document.querySelectorAll('.mc button').forEach(b=>b.classList.toggle('sel',pick[0]===b.dataset.v));
+  $('#sendBtn').disabled=pick.some(v=>!v);
+}
+$('#qBox').addEventListener('click',e=>{
+  const b=e.target.closest('button');if(!b||!st)return;
+  if(st.kind==='ox')pick[+b.dataset.i]=b.dataset.v;else pick[0]=b.dataset.v;
+  $('#sent').hidden=true;paint();
+});
+$('#sendBtn').onclick=async()=>{
+  if(!room||!st||!st.open)return;
+  const a=pick.join('');
+  $('#sendBtn').disabled=true;
+  try{await room.submit(st.qid,pid,a);store.setItem('mq-a-'+st.qid,a);$('#sent').hidden=false;}
+  catch(e){$('#sent').hidden=false;$('#sent').textContent='보내지 못했어요. 다시 눌러 주세요.';}
+  $('#sendBtn').disabled=false;
+};
+if(pre)join();
+</script>
+</body>
+</html>
